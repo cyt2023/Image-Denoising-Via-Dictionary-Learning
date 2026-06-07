@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from skimage import color, io, transform
+from skimage import io, transform
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -43,8 +43,13 @@ def _center_crop_or_resize(image: np.ndarray, image_size: int) -> np.ndarray:
 def load_grayscale_image(path: str | Path, image_size: int) -> np.ndarray:
     image = io.imread(path)
     if image.ndim == 3:
-        image = color.rgb2gray(image)
-        image = image * 255.0
+        # Convert RGB inputs to grayscale with explicit luminance weights to
+        # avoid dtype-dependent warnings in skimage.color.rgb2gray.
+        image = image.astype(np.float64)
+        if image.shape[2] == 4:
+            image = image[:, :, :3]
+        image = image / 255.0
+        image = np.tensordot(image, np.array([0.2125, 0.7154, 0.0721]), axes=([-1], [0])) * 255.0
     image = image.astype(np.float64)
     if image.ndim != 2:
         raise ValueError(f"Unsupported image shape {image.shape} for file {path}.")
