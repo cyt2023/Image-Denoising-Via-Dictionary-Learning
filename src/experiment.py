@@ -54,6 +54,19 @@ def _save_method_images(
         io.imsave(filename, np.clip(image, 0, 255).astype(np.uint8), check_contrast=False)
 
 
+def _build_wide_metrics_table(metrics_df: pd.DataFrame) -> pd.DataFrame:
+    wide = (
+        metrics_df.pivot_table(
+            index=["image_name", "sigma", "noise_variance"],
+            columns="method",
+            values=["mse", "psnr"],
+        )
+        .sort_index()
+    )
+    wide.columns = [f"{metric}_{method}".lower().replace("+", "_plus_") for metric, method in wide.columns]
+    return wide.reset_index()
+
+
 def run_experiment(args) -> None:
     if args.fast_mode:
         args.n_train_patches = 1000
@@ -90,6 +103,7 @@ def run_experiment(args) -> None:
                 patch_size=args.patch_size,
                 sparsity=args.sparsity,
                 n_atoms=args.n_atoms,
+                sigma_noise=sigma,
             )
 
             noisy_patches = extract_overlapping_patches(noisy, args.patch_size)
@@ -107,12 +121,14 @@ def run_experiment(args) -> None:
                 sparsity=args.sparsity,
                 n_iter=args.ksvd_iter,
                 seed=args.seed + image_idx * 1000 + sigma,
+                init_method="dct",
             )
             learned = denoise_with_dictionary(
                 noisy_image=noisy,
                 D=D_learned,
                 patch_size=args.patch_size,
                 sparsity=args.sparsity,
+                sigma_noise=sigma,
             )
 
             _save_method_images(
@@ -161,6 +177,10 @@ def run_experiment(args) -> None:
     metrics_path = dirs["tables"] / "metrics.csv"
     metrics_df.to_csv(metrics_path, index=False)
 
+    wide_metrics_df = _build_wide_metrics_table(metrics_df)
+    wide_metrics_path = dirs["tables"] / "metrics_wide.csv"
+    wide_metrics_df.to_csv(wide_metrics_path, index=False)
+
     summary_df = (
         metrics_df.groupby(["sigma", "noise_variance", "method"], as_index=False)[["mse", "psnr"]]
         .mean()
@@ -176,6 +196,7 @@ def run_experiment(args) -> None:
     print("\nRun complete.")
     print(f"Selected image names: {', '.join(selected_names)}")
     print(f"Metrics CSV: {metrics_path}")
+    print(f"Wide metrics CSV: {wide_metrics_path}")
     print(f"Generated figures: {dirs['figures']}")
     print("\nAverage PSNR table by method and sigma:")
     print(avg_psnr_table.round(3).to_string())

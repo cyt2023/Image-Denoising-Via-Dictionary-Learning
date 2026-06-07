@@ -35,13 +35,16 @@ def create_dct_dictionary(patch_size: int, n_atoms: int) -> np.ndarray:
     grid = np.arange(patch_size, dtype=np.float64)
 
     for k in range(atoms_per_dim):
-        basis = np.cos(grid * k * np.pi / atoms_per_dim)
+        basis = np.cos(np.pi * (2.0 * grid + 1.0) * k / (2.0 * atoms_per_dim))
         if k > 0:
             basis = basis - np.mean(basis)
         dct_1d[:, k] = basis / np.linalg.norm(basis)
 
-    D = np.kron(dct_1d, dct_1d)
-    D = D[:, :n_atoms]
+    atoms: list[np.ndarray] = []
+    for u in range(atoms_per_dim):
+        for v in range(atoms_per_dim):
+            atoms.append(np.kron(dct_1d[:, u], dct_1d[:, v]))
+    D = np.column_stack(atoms[:n_atoms])
     return normalise_columns(D)
 
 
@@ -92,12 +95,19 @@ def denoise_with_dictionary(
     D: np.ndarray,
     patch_size: int,
     sparsity: int,
+    sigma_noise: float | None = None,
 ) -> np.ndarray:
     patches = extract_overlapping_patches(noisy_image, patch_size)
     patch_matrix = patches_to_matrix(patches)
     patch_means = np.mean(patch_matrix, axis=0, keepdims=True)
     centered = patch_matrix - patch_means
-    codes = omp_batch(D, centered, sparsity)
+
+    error_tolerance = None
+    if sigma_noise is not None:
+        patch_dim = patch_size * patch_size
+        error_tolerance = 1.15 * sigma_noise * np.sqrt(patch_dim)
+
+    codes = omp_batch(D, centered, sparsity, error_tolerance=error_tolerance)
     reconstructed = D @ codes + patch_means
     denoised_patches = matrix_to_patches(reconstructed, patch_size)
     denoised = reconstruct_from_overlapping_patches(
