@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+env/
+
+results/
+BSDS300/
+BSDS300-images.tgz
+
+.DS_Store
+Thumbs.db
