@@ -64,5 +64,4 @@ def select_random_images(data_dir: str | Path, n_images: int, seed: int) -> list
 def add_gaussian_noise(image: np.ndarray, sigma: float, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     noise = rng.normal(loc=0.0, scale=sigma, size=image.shape)
-    noisy = image.astype(np.float64) + noise
-    return np.clip(noisy, 0.0, 255.0)
+    return image.astype(np.float64) + noise

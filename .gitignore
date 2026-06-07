@@ -6,6 +6,13 @@ venv/
 env/
 
 results/
+results_fast/
+results_full/
+debug_run/
+debug_run2/
+debug_run3/
+debug_run4/
+debug_run5/
 BSDS300/
 BSDS300-images.tgz
 

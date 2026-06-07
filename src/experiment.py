@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -9,13 +10,37 @@ from tqdm import tqdm
 
 from src.baselines import dct_omp_denoise, gaussian_filter_denoise
 from src.data_utils import add_gaussian_noise, load_grayscale_image, select_random_images
-from src.ksvd import denoise_with_dictionary, ksvd
+from src.ksvd import denoise_patch_matrix, ksvd
 from src.metrics import mse, psnr
-from src.patch_utils import extract_overlapping_patches, patches_to_matrix, sample_training_patches
+from src.patch_utils import (
+    extract_overlapping_patches,
+    matrix_to_patches,
+    patches_to_matrix,
+    reconstruct_from_overlapping_patches,
+    sample_training_patches,
+)
 from src.plotting import plot_metric_vs_noise_variance, save_comparison_figure, save_dictionary_atoms
 
 
 NOISE_LEVELS = [5, 10, 15, 25]
+
+
+def _validate_args(args) -> None:
+    if args.patch_size > args.image_size:
+        raise ValueError(
+            f"patch_size={args.patch_size} cannot exceed image_size={args.image_size}."
+        )
+    if args.sparsity > args.n_atoms:
+        raise ValueError(
+            f"sparsity={args.sparsity} cannot exceed n_atoms={args.n_atoms}."
+        )
+    if args.n_atoms < args.patch_size * args.patch_size:
+        raise ValueError(
+            "n_atoms should be at least patch_size^2 for an overcomplete or complete patch dictionary. "
+            f"Got n_atoms={args.n_atoms} and patch_size^2={args.patch_size * args.patch_size}."
+        )
+    if args.output_dir.strip() == "":
+        raise ValueError("output_dir cannot be empty.")
 
 
 def _prepare_output_dirs(output_dir: str | Path) -> dict[str, Path]:
@@ -67,6 +92,28 @@ def _build_wide_metrics_table(metrics_df: pd.DataFrame) -> pd.DataFrame:
     return wide.reset_index()
 
 
+def _write_run_config(args, dirs: dict[str, Path], selected_names: list[str]) -> None:
+    config = {
+        "data_dir": args.data_dir,
+        "n_images": args.n_images,
+        "image_size": args.image_size,
+        "patch_size": args.patch_size,
+        "n_train_patches": args.n_train_patches,
+        "n_atoms": args.n_atoms,
+        "sparsity": args.sparsity,
+        "ksvd_iter": args.ksvd_iter,
+        "seed": args.seed,
+        "output_dir": str(dirs["root"]),
+        "fast_mode": bool(args.fast_mode),
+        "noise_levels": NOISE_LEVELS,
+        "selected_images": selected_names,
+    }
+    (dirs["root"] / "config.json").write_text(
+        json.dumps(config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def run_experiment(args) -> None:
     if args.fast_mode:
         args.n_train_patches = 1000
@@ -74,12 +121,14 @@ def run_experiment(args) -> None:
         args.ksvd_iter = 3
         args.sparsity = 4
 
+    _validate_args(args)
     dirs = _prepare_output_dirs(args.output_dir)
     selected_paths = select_random_images(args.data_dir, args.n_images, args.seed)
     selected_names = [path.name for path in selected_paths]
     (dirs["root"] / "selected_images.txt").write_text(
         "\n".join(selected_names) + "\n", encoding="utf-8"
     )
+    _write_run_config(args, dirs, selected_names)
 
     print(f"Selected images: {', '.join(selected_names)}")
     print(
@@ -97,6 +146,8 @@ def run_experiment(args) -> None:
 
         for sigma in tqdm(NOISE_LEVELS, desc=f"{image_stem} sigmas", leave=False):
             noisy = add_gaussian_noise(clean, sigma, seed=args.seed + image_idx * 100 + sigma)
+            noisy_patches = extract_overlapping_patches(noisy, args.patch_size)
+            noisy_matrix = patches_to_matrix(noisy_patches)
             gaussian = gaussian_filter_denoise(noisy, sigma_noise=sigma)
             dct = dct_omp_denoise(
                 noisy_image=noisy,
@@ -104,10 +155,9 @@ def run_experiment(args) -> None:
                 sparsity=args.sparsity,
                 n_atoms=args.n_atoms,
                 sigma_noise=sigma,
+                patch_matrix=noisy_matrix,
             )
 
-            noisy_patches = extract_overlapping_patches(noisy, args.patch_size)
-            noisy_matrix = patches_to_matrix(noisy_patches)
             centered_train = noisy_matrix - np.mean(noisy_matrix, axis=0, keepdims=True)
             Y_train = sample_training_patches(
                 centered_train,
@@ -123,13 +173,18 @@ def run_experiment(args) -> None:
                 seed=args.seed + image_idx * 1000 + sigma,
                 init_method="dct",
             )
-            learned = denoise_with_dictionary(
-                noisy_image=noisy,
+            learned_matrix = denoise_patch_matrix(
+                patch_matrix=noisy_matrix,
                 D=D_learned,
                 patch_size=args.patch_size,
                 sparsity=args.sparsity,
                 sigma_noise=sigma,
             )
+            learned_patches = matrix_to_patches(learned_matrix, args.patch_size)
+            learned = reconstruct_from_overlapping_patches(
+                learned_patches, noisy.shape, args.patch_size
+            )
+            learned = np.clip(learned, 0.0, 255.0)
 
             _save_method_images(
                 dirs,
@@ -195,6 +250,7 @@ def run_experiment(args) -> None:
 
     print("\nRun complete.")
     print(f"Selected image names: {', '.join(selected_names)}")
+    print(f"Run config: {dirs['root'] / 'config.json'}")
     print(f"Metrics CSV: {metrics_path}")
     print(f"Wide metrics CSV: {wide_metrics_path}")
     print(f"Generated figures: {dirs['figures']}")

@@ -1,14 +1,35 @@
 # Image Denoising Via Dictionary Learning
 
-This project implements a classical sparse representation pipeline for image denoising:
+This project implements a classical sparse representation pipeline for grayscale image denoising and is structured to match the main experimental requirements of the course assignment:
 
-- Gaussian baseline
-- DCT dictionary + OMP baseline
+- Gaussian filtering baseline
+- Fixed DCT dictionary + OMP sparse coding baseline
 - Learned dictionary using K-SVD + OMP
 
-The code is designed for a signal processing course project and reproduces the figures and tables needed for a short report and presentation.
+The repository contains the code needed to generate denoised images, quantitative error tables, and visualisations for a short report or presentation. A report-ready discussion of the literature, model design, and validation strategy is included in [REPORT.md](REPORT.md).
 
-## Expected dataset layout
+## Assignment Mapping
+
+The current implementation covers the main technical requirements from the assignment brief:
+
+- Randomly selects `3` grayscale images from the Berkeley Segmentation Dataset
+- Adds zero-mean Gaussian noise with standard deviations `5`, `10`, `15`, and `25`
+- Splits each image into overlapping `8 x 8` patches
+- Samples `6000` patches to train the dictionary
+- Learns a sparse representation model using `K-SVD + OMP`
+- Evaluates denoising quality with `MSE` and `PSNR`
+- Plots estimation error as a function of noise variance
+
+Default experiment settings:
+
+- `n_images = 3`
+- `patch_size = 8`
+- `n_train_patches = 6000`
+- `noise levels = [5, 10, 15, 25]`
+
+One implementation detail not explicitly stated in the assignment is image size normalisation. Images are center-cropped to `256 x 256` when possible, or resized to `256 x 256` for consistency across experiments.
+
+## Expected Dataset Layout
 
 Place the Berkeley Segmentation Dataset images inside the project folder like this:
 
@@ -21,15 +42,15 @@ BSDS300/
 └── iids_test.txt
 ```
 
-Only the images are used. Segmentation labels and benchmark code are not used.
+Only the images are used. Segmentation labels and benchmark code are not required.
 
-## Install dependencies
+## Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Run the experiment
+## Run the Experiment
 
 Quick validation run:
 
@@ -37,19 +58,19 @@ Quick validation run:
 python main.py --fast_mode
 ```
 
-Full experiment:
+Full experiment with assignment-style defaults:
 
 ```bash
 python main.py
 ```
 
-You can also override parameters, for example:
+Example with explicit parameters:
 
 ```bash
 python main.py --data_dir BSDS300/images/train --n_images 3 --image_size 256 --patch_size 8 --n_train_patches 6000 --n_atoms 256 --sparsity 6 --ksvd_iter 10 --seed 42 --output_dir results
 ```
 
-## Generated outputs
+## Generated Outputs
 
 The experiment automatically creates:
 
@@ -61,17 +82,19 @@ The experiment automatically creates:
 Main outputs:
 
 - `results/tables/metrics.csv`
+- `results/tables/metrics_wide.csv`
 - `results/tables/metrics_summary.csv`
 - comparison figures for each image and noise level
-- average MSE vs noise variance plot
-- average PSNR vs noise variance plot
+- average `MSE` vs noise variance plot
+- average `PSNR` vs noise variance plot
 - learned dictionary atom visualisations
 - `results/selected_images.txt`
 
-## Reproducing report figures
+## Suggested Report Workflow
 
-1. Run `python main.py` for the full experiment.
-2. Use the comparison figures in `results/figures/` to show visual denoising quality.
-3. Use `metrics_summary.csv` for average quantitative comparisons across methods and noise levels.
-4. Use the metric-vs-noise plots to discuss robustness as noise variance increases.
-5. Use the dictionary visualisations in `results/dictionaries/` to illustrate what K-SVD learns.
+1. Run `python main.py` using the default settings.
+2. Use the comparison figures in `results/figures/` for qualitative visual assessment.
+3. Use `metrics_summary.csv` to compare methods quantitatively across noise levels.
+4. Use the `MSE` and `PSNR` plots to discuss performance as noise variance increases.
+5. Use dictionary atom visualisations to comment on what K-SVD learns beyond a fixed DCT basis.
+6. Reuse the structure in [REPORT.md](REPORT.md) for the literature survey, method justification, and evaluation discussion.

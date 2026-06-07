@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 import math
 
 import numpy as np
@@ -21,6 +22,10 @@ def normalise_columns(D: np.ndarray) -> np.ndarray:
 
 
 def initialise_dictionary(Y_train: np.ndarray, n_atoms: int, seed: int) -> np.ndarray:
+    if Y_train.ndim != 2:
+        raise ValueError(f"Y_train must be a 2D matrix, got shape {Y_train.shape}.")
+    if n_atoms <= 0:
+        raise ValueError("n_atoms must be positive.")
     rng = np.random.default_rng(seed)
     n_samples = Y_train.shape[1]
     replace = n_samples < n_atoms
@@ -29,7 +34,12 @@ def initialise_dictionary(Y_train: np.ndarray, n_atoms: int, seed: int) -> np.nd
     return normalise_columns(D)
 
 
+@lru_cache(maxsize=None)
 def create_dct_dictionary(patch_size: int, n_atoms: int) -> np.ndarray:
+    if patch_size <= 0:
+        raise ValueError("patch_size must be positive.")
+    if n_atoms <= 0:
+        raise ValueError("n_atoms must be positive.")
     atoms_per_dim = math.ceil(math.sqrt(n_atoms))
     dct_1d = np.zeros((patch_size, atoms_per_dim), dtype=np.float64)
     grid = np.arange(patch_size, dtype=np.float64)
@@ -56,8 +66,24 @@ def ksvd(
     seed: int,
     init_method: str = "random",
 ) -> tuple[np.ndarray, np.ndarray]:
+    if Y_train.ndim != 2:
+        raise ValueError(f"Y_train must be a 2D matrix, got shape {Y_train.shape}.")
+    if n_atoms <= 0:
+        raise ValueError("n_atoms must be positive.")
+    if sparsity <= 0:
+        raise ValueError("sparsity must be positive.")
+    if sparsity > n_atoms:
+        raise ValueError(f"sparsity={sparsity} cannot exceed n_atoms={n_atoms}.")
+    if n_iter <= 0:
+        raise ValueError("n_iter must be positive.")
+    if init_method not in {"random", "dct"}:
+        raise ValueError(f"Unsupported init_method '{init_method}'.")
     if init_method == "dct":
         patch_size = int(round(np.sqrt(Y_train.shape[0])))
+        if patch_size * patch_size != Y_train.shape[0]:
+            raise ValueError(
+                "Y_train row dimension must be a perfect square when using DCT initialization."
+            )
         D = create_dct_dictionary(patch_size, n_atoms)
     else:
         D = initialise_dictionary(Y_train, n_atoms, seed)
@@ -90,15 +116,30 @@ def ksvd(
     return D, X
 
 
-def denoise_with_dictionary(
-    noisy_image: np.ndarray,
+def denoise_patch_matrix(
+    patch_matrix: np.ndarray,
     D: np.ndarray,
     patch_size: int,
     sparsity: int,
     sigma_noise: float | None = None,
 ) -> np.ndarray:
-    patches = extract_overlapping_patches(noisy_image, patch_size)
-    patch_matrix = patches_to_matrix(patches)
+    if patch_matrix.ndim != 2:
+        raise ValueError(f"patch_matrix must be 2D, got shape {patch_matrix.shape}.")
+    if patch_matrix.shape[0] != patch_size * patch_size:
+        raise ValueError(
+            f"patch_matrix first dimension must equal patch_size^2={patch_size * patch_size}, "
+            f"got {patch_matrix.shape[0]}."
+        )
+    if D.ndim != 2:
+        raise ValueError(f"Dictionary D must be 2D, got shape {D.shape}.")
+    if D.shape[0] != patch_matrix.shape[0]:
+        raise ValueError(
+            f"Dictionary row dimension {D.shape[0]} does not match patch dimension {patch_matrix.shape[0]}."
+        )
+    if sparsity <= 0:
+        raise ValueError("sparsity must be positive.")
+    if sparsity > D.shape[1]:
+        raise ValueError(f"sparsity={sparsity} cannot exceed number of atoms={D.shape[1]}.")
     patch_means = np.mean(patch_matrix, axis=0, keepdims=True)
     centered = patch_matrix - patch_means
 
@@ -108,7 +149,25 @@ def denoise_with_dictionary(
         error_tolerance = 1.15 * sigma_noise * np.sqrt(patch_dim)
 
     codes = omp_batch(D, centered, sparsity, error_tolerance=error_tolerance)
-    reconstructed = D @ codes + patch_means
+    return D @ codes + patch_means
+
+
+def denoise_with_dictionary(
+    noisy_image: np.ndarray,
+    D: np.ndarray,
+    patch_size: int,
+    sparsity: int,
+    sigma_noise: float | None = None,
+) -> np.ndarray:
+    patches = extract_overlapping_patches(noisy_image, patch_size)
+    patch_matrix = patches_to_matrix(patches)
+    reconstructed = denoise_patch_matrix(
+        patch_matrix=patch_matrix,
+        D=D,
+        patch_size=patch_size,
+        sparsity=sparsity,
+        sigma_noise=sigma_noise,
+    )
     denoised_patches = matrix_to_patches(reconstructed, patch_size)
     denoised = reconstruct_from_overlapping_patches(
         denoised_patches, noisy_image.shape, patch_size
